@@ -83,6 +83,10 @@ export default function BookingSystem() {
     try {
       const response = await fetch(`/api/bookings/${bookingId}`, {
         method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ isAdmin: false }) // Pass isAdmin flag for admin deletion
       })
 
       const result = await response.json()

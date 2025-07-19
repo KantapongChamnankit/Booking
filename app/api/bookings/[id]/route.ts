@@ -58,6 +58,7 @@ const writeBookings = (bookings: Booking[]): void => {
 // DELETE - Delete a specific booking (only if owned by current session)
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const body = await request.json()
     const sessionId = getSessionId()
     if (!sessionId) {
       return NextResponse.json({ error: "No session found" }, { status: 401 })
@@ -79,11 +80,11 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
 
     const booking = bookings[bookingIndex]
 
-    // Check ownership
-    if (booking.session_id !== sessionId) {
-      return NextResponse.json({ error: "You can only delete your own bookings" }, { status: 403 })
+    if (!body?.isAdmin) {
+      if (booking.session_id !== sessionId) {
+        return NextResponse.json({ error: "You can only delete your own bookings" }, { status: 403 })
+      }
     }
-
     // Remove the booking
     bookings.splice(bookingIndex, 1)
 

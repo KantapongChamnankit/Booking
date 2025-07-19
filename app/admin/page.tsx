@@ -64,6 +64,42 @@ export default function AdminPage() {
     }
   }
 
+  // Add this function to handle individual booking removal
+  const removeBooking = async (id: string) => {
+    setIsLoading(true)
+    try {
+      const response = await fetch(`/api/bookings/${id}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ isAdmin: true })
+      })
+      if (response.ok) {
+        toast({
+          title: "Booking Removed",
+          description: `Booking ${id} has been deleted.`,
+        })
+        fetchBookings()
+      } else {
+        const error = await response.json()
+        toast({
+          title: "Error",
+          description: error.error || "Failed to remove booking",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to remove booking",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetchBookings()
   }, [])
@@ -157,7 +193,18 @@ export default function AdminPage() {
                             {booking.machine}
                           </div>
                         </div>
-                        <Badge className={color}>{status}</Badge>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge className={color}>{status}</Badge>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => removeBooking(booking.id)}
+                            disabled={isLoading}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Remove
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4 text-sm">
