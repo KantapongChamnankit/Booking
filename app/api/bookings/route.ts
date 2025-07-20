@@ -6,6 +6,7 @@ import path from "path"
 interface Booking {
   id: string
   booker_name: string
+  phone: string
   machine: string
   date: string
   start_time: string
@@ -36,6 +37,28 @@ const getSessionId = (): string | null => {
   }
 }
 
+// Validate Thai phone number
+const validateThaiPhone = (phone: string): boolean => {
+  // Remove all spaces, dashes, and parentheses
+  const cleanPhone = phone.replace(/[\s\-\(\)]/g, '')
+  
+  // Thai phone number patterns:
+  // Mobile: 08X-XXX-XXXX or 06X-XXX-XXXX or 09X-XXX-XXXX
+  // With country code: +66 8X-XXX-XXXX or 66 8X-XXX-XXXX
+  // Landline: 0X-XXX-XXXX (where X is 2-7 for area codes)
+  
+  const patterns = [
+    /^0[689]\d{8}$/, // Mobile numbers: 08X, 06X, 09X followed by 8 digits
+    /^0[2-7]\d{7,8}$/, // Landline numbers: area codes 02-07 followed by 7-8 digits
+    /^\+66[689]\d{8}$/, // International mobile: +66 8X, +66 6X, +66 9X
+    /^\+660[2-7]\d{7,8}$/, // International landline: +66 0X
+    /^66[689]\d{8}$/, // International mobile without +: 66 8X, 66 6X, 66 9X
+    /^660[2-7]\d{7,8}$/ // International landline without +: 66 0X
+  ]
+  
+  return patterns.some(pattern => pattern.test(cleanPhone))
+}
+
 // Read bookings from JSON file
 const readBookings = (): Booking[] => {
   try {
@@ -58,7 +81,7 @@ const writeBookings = (bookings: Booking[]): void => {
     fs.writeFileSync(DATA_FILE, JSON.stringify(bookings, null, 2))
   } catch (error) {
     console.error("Error writing bookings:", error)
-    throw new Error("Failed to save bookings")
+    throw new Error("ไม่สามารถบันทึกข้อมูลการจองได้")
   }
 }
 
@@ -131,7 +154,7 @@ export async function GET() {
     })
   } catch (error) {
     console.error("Error in GET /api/bookings:", error)
-    return NextResponse.json({ error: "Failed to fetch bookings" }, { status: 500 })
+    return NextResponse.json({ error: "ไม่สามารถโหลดข้อมูลการจองได้" }, { status: 500 })
   }
 }
 
@@ -140,25 +163,32 @@ export async function POST(request: NextRequest) {
   try {
     const sessionId = getSessionId()
     if (!sessionId) {
-      return NextResponse.json({ error: "No session found. Please refresh the page." }, { status: 401 })
+      return NextResponse.json({ error: "ไม่พบเซสชั่น กรุณารีเฟรชหน้าเว็บ" }, { status: 401 })
     }
 
     const body = await request.json()
-    const { bookerName, machine, date, startTime, endTime } = body
+    const { bookerName, machine, date, startTime, endTime, phone } = body
 
     // Basic validation
-    if (!bookerName || !machine || !date || !startTime || !endTime) {
-      return NextResponse.json({ error: "All fields are required" }, { status: 400 })
+    if (!bookerName || !machine || !date || !startTime || !endTime || !phone) {
+      return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" }, { status: 400 })
+    }
+
+    // Validate Thai phone number
+    if (!validateThaiPhone(phone)) {
+      return NextResponse.json({ 
+        error: "เบอร์โทรศัพท์ไม่ถูกต้อง กรุณาใส่เบอร์โทรศัพท์ที่ถูกต้อง (เช่น 08X-XXX-XXXX หรือ 02-XXX-XXXX)" 
+      }, { status: 400 })
     }
 
     if (endTime <= startTime) {
-      return NextResponse.json({ error: "End time must be after start time" }, { status: 400 })
+      return NextResponse.json({ error: "เวลาสิ้นสุดต้องหลังเวลาเริ่มต้น" }, { status: 400 })
     }
 
     const bookingStartDateTime = new Date(`${date}T${startTime}`)
     const now = new Date()
     if (bookingStartDateTime <= now) {
-      return NextResponse.json({ error: "Bookings cannot be made for past dates/times" }, { status: 400 })
+      return NextResponse.json({ error: "ไม่สามารถจองย้อนหลังได้ กรุณาเลือกเวลาในอนาคต" }, { status: 400 })
     }
 
     // Read current bookings
@@ -174,12 +204,13 @@ export async function POST(request: NextRequest) {
       date,
       start_time: startTime,
       end_time: endTime,
+      phone,
     }
 
     // Check for overlapping bookings
     if (hasOverlappingBooking(bookings, newBookingData)) {
       return NextResponse.json(
-        { error: "This time slot conflicts with an existing booking for the same machine" },
+        { error: "ช่วงเวลานี้มีคนจองแล้ว กรุณาเลือกเวลาอื่น" },
         { status: 409 },
       )
     }
@@ -199,19 +230,19 @@ export async function POST(request: NextRequest) {
     writeBookings(bookings)
 
     console.log(
-      `New booking created: ${bookerName} - ${machine} on ${date} from ${startTime} to ${endTime} (Session: ${sessionId})`,
+      `การจองใหม่: ${bookerName} - ${machine} วันที่ ${date} เวลา ${startTime} ถึง ${endTime} (เซสชั่น: ${sessionId})`,
     )
 
     return NextResponse.json(
       {
-        message: "Booking created successfully",
+        message: "จองสำเร็จ",
         booking: { ...newBooking, isOwner: true },
       },
       { status: 201 },
     )
   } catch (error) {
     console.error("Error in POST /api/bookings:", error)
-    return NextResponse.json({ error: "Failed to create booking" }, { status: 500 })
+    return NextResponse.json({ error: "ไม่สามารถสร้างการจองได้" }, { status: 500 })
   }
 }
 
@@ -229,11 +260,11 @@ export async function DELETE() {
     writeBookings(activeBookings)
 
     return NextResponse.json({
-      message: `Removed ${deletedCount} expired booking(s)`,
+      message: `ลบการจองที่หมดอายุแล้ว ${deletedCount} รายการ`,
       deletedCount: deletedCount,
     })
   } catch (error) {
     console.error("Error in DELETE /api/bookings:", error)
-    return NextResponse.json({ error: "Failed to remove expired bookings" }, { status: 500 })
+    return NextResponse.json({ error: "ไม่สามารถลบการจองที่หมดอายุได้" }, { status: 500 })
   }
 }

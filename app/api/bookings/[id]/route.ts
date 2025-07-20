@@ -10,6 +10,7 @@ interface Booking {
   date: string
   start_time: string
   end_time: string
+  phone: string
   created_at: string
   session_id: string
 }

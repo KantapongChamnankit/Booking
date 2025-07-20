@@ -1,15 +1,14 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
+import { Kanit } from "next/font/google"
 import "./globals.css"
 import { Toaster } from "@/components/ui/toaster"
 
-const inter = Inter({ subsets: ["latin"] })
+const inter = Kanit({ weight: "400", subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Equipment Booking System - Local Storage",
-  description: "Reserve machines and equipment with local JSON file storage",
-    generator: 'v0.dev'
+  title: "ระบบจองเครื่องซักผ้า",
+  description: "ระบบจองเครื่องซักผ้า - หอพัก 4",
 }
 
 export default function RootLayout({
