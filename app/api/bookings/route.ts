@@ -123,7 +123,7 @@ const generateId = (): string => {
 export async function GET() {
   try {
     const sessionId = getSessionId()
-    const bookings = readBookings()
+    let bookings = readBookings()
 
     // Clean up expired bookings
     const activeBookings = cleanupExpiredBookings(bookings)
@@ -131,10 +131,11 @@ export async function GET() {
     // Save cleaned bookings back to file if any were removed
     if (activeBookings.length !== bookings.length) {
       writeBookings(activeBookings)
+      bookings = activeBookings // อัปเดต bookings หลังลบ
     }
 
     // Sort bookings by date and time
-    activeBookings.sort((a, b) => {
+    bookings.sort((a, b) => {
       if (a.date !== b.date) {
         return a.date.localeCompare(b.date)
       }
@@ -142,14 +143,14 @@ export async function GET() {
     })
 
     // Add ownership info to each booking
-    const bookingsWithOwnership = activeBookings.map((booking) => ({
+    const bookingsWithOwnership = bookings.map((booking) => ({
       ...booking,
       isOwner: booking.session_id === sessionId,
     }))
 
     return NextResponse.json({
       bookings: bookingsWithOwnership,
-      count: activeBookings.length,
+      count: bookings.length,
       sessionId: sessionId,
     })
   } catch (error) {
