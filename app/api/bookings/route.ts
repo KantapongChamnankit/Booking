@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
+import { isBookingExpired, getCurrentDateString } from "@/lib/timezone"
 
 interface Booking {
   id: string
@@ -85,12 +86,22 @@ const writeBookings = (bookings: Booking[]): void => {
   }
 }
 
-// Clean up expired bookings
+// Clean up expired bookings with proper timezone handling
 const cleanupExpiredBookings = (bookings: Booking[]): Booking[] => {
-  const now = new Date()
   return bookings.filter((booking) => {
-    const bookingEndDateTime = new Date(`${booking.date}T${booking.end_time}`)
-    return bookingEndDateTime > now
+    try {
+      const expired = isBookingExpired(booking.date, booking.end_time)
+      
+      if (expired) {
+        console.log(`Auto-removing expired booking: ${booking.booker_name} - ${booking.date} ${booking.end_time}`)
+      }
+      
+      return !expired
+    } catch (error) {
+      console.error("Error processing booking during cleanup:", booking, error)
+      // Keep booking if there's an error parsing dates
+      return true
+    }
   })
 }
 
