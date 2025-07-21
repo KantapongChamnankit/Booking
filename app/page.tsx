@@ -101,7 +101,12 @@ export default function BookingSystem() {
       setIsLoading(false)
     }
   }
-
+ useEffect(() => {
+  // ถ้า bookings มีรายการหมดอายุ ให้รีเฟรชข้อมูลใหม่
+ useEffect(() => {
+    fetchBookings()// ดึงข้อมูลใหม่จาก API ตอนเปิดหน้าเว็บ
+  }, [])
+}, [bookings])
   // Delete a booking
   const deleteBooking = async (bookingId: string) => {
     setDeletingId(bookingId)
