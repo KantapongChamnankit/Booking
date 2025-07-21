@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Calendar, Clock, User, Settings, RefreshCw, AlertCircle, Database, Trash2, Shield, PhoneCall, Waves } from "lucide-react"
+import { getCurrentDateString } from "@/lib/timezone"
 
 interface Booking {
   id: string
@@ -169,9 +170,12 @@ export default function BookingSystem() {
 
   const handleCleanup = useCallback(async () => {
     try {
-      await apiCall("/api/cleanup", { method: "POST" })
+      const result = await apiCall("/api/cleanup", { method: "POST" })
+      return result
     } catch (error) {
-      // Silent cleanup
+      console.error("Cleanup failed:", error)
+      // Silent cleanup failure - don't show error to user for automatic cleanup
+      return { deletedCount: 0, success: false }
     }
   }, [])
 
@@ -230,7 +234,7 @@ export default function BookingSystem() {
 
   const validateForm = useCallback((): boolean => {
     const { bookerName, machine, startTime, endTime, phone } = formData
-    const currentDate = new Date().toISOString().split("T")[0]
+    const currentDate = getCurrentDateString()
 
     if (!bookerName || !machine || !currentDate || !startTime || !endTime || !phone) {
       toast({
@@ -285,7 +289,7 @@ export default function BookingSystem() {
         bookerName: formData.bookerName,
         phone: formData.phone,
         machine: formData.machine,
-        date: new Date().toISOString().split("T")[0],
+        date: getCurrentDateString(),
         startTime: formData.startTime,
         endTime: formData.endTime,
       }
