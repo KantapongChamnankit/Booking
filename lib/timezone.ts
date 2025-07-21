@@ -15,7 +15,30 @@ export const getCurrentThailandTime = (): Date => {
 
 // Get current date in Thailand timezone
 export const getCurrentThailandDate = (): Date => {
-  return new Date(new Date().toLocaleString("en-US", { timeZone: THAILAND_TIMEZONE }))
+  // Get current UTC time
+  const now = new Date()
+  
+  // Convert to Thailand time (UTC+7)
+  // Method 1: Use Intl API for more reliable timezone conversion
+  const thailandTimeString = now.toLocaleString("en-CA", { 
+    timeZone: THAILAND_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
+  
+  // Parse the formatted string back to a Date object
+  const [datePart, timePart] = thailandTimeString.split(', ')
+  const [year, month, day] = datePart.split('-').map(Number)
+  const [hours, minutes, seconds] = timePart.split(':').map(Number)
+  
+  const thailandDate = new Date(year, month - 1, day, hours, minutes, seconds)
+  
+  return thailandDate
 }
 
 /**
@@ -42,20 +65,33 @@ export const createBookingEndDateTime = (date: string, endTime: string): Date =>
  */
 export const isBookingExpired = (date: string, endTime: string): boolean => {
   try {
-    // Get current time in Thailand
+    // Get current time in Thailand timezone
     const nowInThailand = getCurrentThailandDate()
     
-    // Create booking end datetime
-    const bookingEndDateTime = new Date(`${date}T${endTime}:00`)
+    // Create booking end date/time in Thailand timezone
+    // Parse the date and time components
+    const [year, month, day] = date.split('-').map(Number)
+    const [hours, minutes] = endTime.split(':').map(Number)
     
-    // Convert booking time to Thailand timezone
-    const bookingEndInThailand = new Date(bookingEndDateTime.toLocaleString("en-US", { timeZone: THAILAND_TIMEZONE }))
+    // Create a date object representing the booking end time in Thailand
+    // We'll create it as a local date and then interpret it as Thailand time
+    const bookingEndThailand = new Date(year, month - 1, day, hours, minutes, 0, 0)
     
-    console.log(`Checking expiry: Current Thailand time: ${nowInThailand.toISOString()}, Booking end: ${bookingEndInThailand.toISOString()}`)
+    console.log(`🕐 Booking expiry check:`)
+    console.log(`   Input booking: ${date} ${endTime}`)
+    console.log(`   Current Thailand time: ${nowInThailand.toLocaleString('en-US', { timeZone: THAILAND_TIMEZONE })}`)
+    console.log(`   Booking end time: ${bookingEndThailand.toLocaleString('en-US', { timeZone: THAILAND_TIMEZONE })}`)
+    console.log(`   Current Thailand epoch: ${nowInThailand.getTime()}`)
+    console.log(`   Booking end epoch: ${bookingEndThailand.getTime()}`)
     
-    return nowInThailand > bookingEndInThailand
+    // Compare the times (both should be in the same reference frame now)
+    const isExpired = nowInThailand.getTime() > bookingEndThailand.getTime()
+    console.log(`   Result: ${isExpired ? 'EXPIRED ❌' : 'ACTIVE ✅'}`)
+    
+    return isExpired
   } catch (error) {
-    console.error("Error checking booking expiry:", error)
+    console.error("❌ Error checking booking expiry:", error)
+    console.error("   Booking data:", { date, endTime })
     return false // Don't delete if we can't determine expiry
   }
 }
@@ -94,12 +130,32 @@ export const logTimezoneDebug = (context: string = "Debug") => {
   const utcTime = now.toISOString()
   const thailandTime = now.toLocaleString("en-US", { timeZone: THAILAND_TIMEZONE })
   const serverLocalTime = now.toString()
+  const thailandDate = getCurrentThailandDate()
   
-  console.log(`=== ${context} - Timezone Debug ===`)
-  console.log(`UTC Time: ${utcTime}`)
-  console.log(`Thailand Time: ${thailandTime}`)
-  console.log(`Server Local Time: ${serverLocalTime}`)
-  console.log(`Server Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`)
-  console.log(`Thailand Date String: ${getCurrentDateString()}`)
-  console.log(`=====================================`)
+  console.log(`\n=== ${context} - Timezone Debug ===`)
+  console.log(`🌍 UTC Time: ${utcTime}`)
+  console.log(`🇹🇭 Thailand Time (formatted): ${thailandTime}`)
+  console.log(`🇹🇭 Thailand Date (computed): ${thailandDate.toLocaleString('en-US')}`)
+  console.log(`🇹🇭 Thailand ISO: ${thailandDate.toISOString()}`)
+  console.log(`💻 Server Local Time: ${serverLocalTime}`)
+  console.log(`⚙️  Server Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`)
+  console.log(`📅 Thailand Date String: ${getCurrentDateString()}`)
+  console.log(`=====================================\n`)
+}
+
+/**
+ * Test function to verify timezone calculations
+ */
+export const testTimezoneCalculations = (testDate: string, testTime: string) => {
+  console.log(`\n🧪 Testing timezone calculations for: ${testDate} ${testTime}`)
+  
+  const nowThailand = getCurrentThailandDate()
+  const isExpired = isBookingExpired(testDate, testTime)
+  
+  console.log(`Current Thailand time: ${nowThailand.toLocaleString('en-US')}`)
+  console.log(`Test booking end: ${testDate} ${testTime}`)
+  console.log(`Is expired: ${isExpired}`)
+  console.log(`=====================================\n`)
+  
+  return { nowThailand, isExpired }
 }
