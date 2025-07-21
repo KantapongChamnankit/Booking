@@ -57,8 +57,6 @@ export async function POST() {
     // Save cleaned bookings
     writeBookings(activeBookings)
 
-    console.log(`Cleanup completed: removed ${deletedCount} expired bookings`)
-
     return NextResponse.json({
       success: true,
       message: `Removed ${deletedCount} expired booking(s)`,

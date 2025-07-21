@@ -1,19 +1,14 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Calendar, Clock, User, Settings, RefreshCw, AlertCircle, Database, Trash2, Shield, PhoneCall, Waves } from "lucide-react"
-import { Calendar as CalendarComponent } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { format } from "date-fns"
-import { cn } from "@/lib/utils"
 
 interface Booking {
   id: string
@@ -28,15 +23,48 @@ interface Booking {
   isOwner?: boolean
 }
 
-const machines = ["big indoor", "small indoor", "outdoor"]
+interface FormData {
+  bookerName: string
+  phone: string
+  machine: string
+  date: string
+  startTime: string
+  endTime: string
+}
 
-// Add this custom washing machine icon component
+// Constants
+const MACHINE_OPTIONS = [
+  {
+    id: "big-indoor",
+    name: "เครื่องซักผ้าในหอ (ใหญ่)",
+    description: "",
+  },
+  {
+    id: "small-indoor",
+    name: "เครื่องซักผ้าในหอ (เล็ก)",
+    description: "",
+  },
+  {
+    id: "outdoor",
+    name: "เครื่องซักผ้านอกหอ",
+    description: "",
+  }
+] as const
+
+const INITIAL_FORM_DATA: FormData = {
+  bookerName: "",
+  phone: "",
+  machine: "",
+  date: "",
+  startTime: "",
+  endTime: "",
+}
+
+const REFRESH_INTERVAL = 5000 // 30 seconds
+
+// Components
 const WashingMachineIcon = ({ className = "h-6 w-6" }: { className?: string }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    className={className}
-  >
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
     <rect x="2" y="2" width="20" height="20" rx="4" ry="4" />
     <rect x="4" y="4" width="4" height="1.5" rx="0.75" fill="white" />
     <circle cx="16" cy="5" r="1" fill="white" />
@@ -46,169 +74,165 @@ const WashingMachineIcon = ({ className = "h-6 w-6" }: { className?: string }) =
   </svg>
 )
 
-export default function BookingSystem() {
-  const [bookings, setBookings] = useState<Booking[]>([])
-  const [formData, setFormData] = useState({
-    bookerName: "",
-    phone: "",
-    machine: "",
-    date: "",
-    startTime: "",
-    endTime: "",
+// Utility functions
+const validateThaiPhone = (phone: string): boolean => {
+  const cleanPhone = phone.replace(/[\s\-\(\)]/g, '')
+  const patterns = [
+    /^0[689]\d{8}$/,
+    /^0[2-7]\d{7,8}$/,
+    /^\+66[689]\d{8}$/,
+    /^\+660[2-7]\d{7,8}$/,
+    /^66[689]\d{8}$/,
+    /^660[2-7]\d{7,8}$/
+  ]
+  return patterns.some(pattern => pattern.test(cleanPhone))
+}
+
+const formatTimeSlot = (startTime: string, endTime: string): string => {
+  const formatTime = (time: string) => {
+    const [hours, minutes] = time.split(":")
+    const hour = Number.parseInt(hours)
+    const ampm = hour >= 12 ? "PM" : "AM"
+    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour
+    return `${displayHour}:${minutes} ${ampm}`
+  }
+  return `${formatTime(startTime)} - ${formatTime(endTime)}`
+}
+
+const formatDate = (dateString: string): string => {
+  const date = new Date(dateString)
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   })
+}
+
+// API functions
+const apiCall = async (url: string, options?: RequestInit) => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+    ...options,
+  })
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Network error" }))
+    throw new Error(error.error || `HTTP ${response.status}`)
+  }
+  
+  return response.json()
+}
+
+export default function BookingSystem() {
+  // State
+  const [bookings, setBookings] = useState<Booking[]>([])
+  const [formData, setFormData] = useState<FormData>(INITIAL_FORM_DATA)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showMachineModal, setShowMachineModal] = useState(false)
-  const [date, setDate] = useState<Date>()
+  
   const { toast } = useToast()
 
-  // Initialize session
-  const initializeSession = async () => {
+  // Memoized values
+  const myBookings = useMemo(
+    () => bookings.filter((booking) => booking.isOwner),
+    [bookings]
+  )
+
+  const groupedBookings = useMemo(() => ({
+    "เครื่องซักผ้าในหอ (ใหญ่)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (ใหญ่)"),
+    "เครื่องซักผ้าในหอ (เล็ก)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (เล็ก)"),
+    "เครื่องซักผ้านอกหอ": bookings.filter(b => b.machine === "เครื่องซักผ้านอกหอ")
+  }), [bookings])
+
+  const isFormValid = useMemo(() => {
+    const { bookerName, machine, startTime, endTime, phone } = formData
+    return !!(bookerName && machine && startTime && endTime && phone && validateThaiPhone(phone))
+  }, [formData])
+
+  // API functions
+  const initializeSession = useCallback(async () => {
     try {
-      const response = await fetch("/api/auth/session")
-      if (response.ok) {
-        const data = await response.json()
-        setSessionId(data.sessionId)
-      }
+      const data = await apiCall("/api/auth/session")
+      setSessionId(data.sessionId)
     } catch (error) {
       console.error("Failed to initialize session:", error)
     }
-  }
+  }, [])
 
-  // Fetch bookings from local JSON
-  const fetchBookings = async () => {
+  const handleCleanup = useCallback(async () => {
+    try {
+      await apiCall("/api/cleanup", { method: "POST" })
+    } catch (error) {
+      // Silent cleanup
+    }
+  }, [])
+
+  const fetchBookings = useCallback(async () => {
     setIsLoading(true)
     setError(null)
+    
     try {
-      const response = await fetch("/api/bookings")
-      if (response.ok) {
-        const data = await response.json()
-        setBookings(data.bookings || [])
-        if (data.sessionId) {
-          setSessionId(data.sessionId)
-        }
-      } else {
-        setError("โหลดข้อมูลการจองล้มเหลว")
-        console.error("Failed to fetch bookings:", response.status)
+      await handleCleanup()
+      const data = await apiCall("/api/bookings")
+      
+      setBookings(data.bookings || [])
+      if (data.sessionId) {
+        setSessionId(data.sessionId)
       }
     } catch (error) {
-      setError("เกิดข้อผิดพลาดในการเชื่อมต่อ")
+      const message = error instanceof Error ? error.message : "เกิดข้อผิดพลาดในการเชื่อมต่อ"
+      setError(message)
       console.error("Failed to fetch bookings:", error)
     } finally {
       setIsLoading(false)
     }
-  }
- 
-}, [bookings])
-  // Delete a booking
-  const deleteBooking = async (bookingId: string) => {
+  }, [handleCleanup])
+
+  const deleteBooking = useCallback(async (bookingId: string) => {
     setDeletingId(bookingId)
+    
     try {
-      const response = await fetch(`/api/bookings/${bookingId}`, {
+      await apiCall(`/api/bookings/${bookingId}`, {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ isAdmin: false }) // Pass isAdmin flag for admin deletion
+        body: JSON.stringify({ isAdmin: false }),
       })
 
-      const result = await response.json()
-
-      if (response.ok) {
-        toast({
-          title: "ลบการจองสำเร็จ!",
-          description: "รายการจองถูกลบเรียบร้อยแล้ว",
-        })
-        await fetchBookings() // Refresh the list
-      } else {
-        toast({
-          title: "ลบการจองไม่สำเร็จ",
-          description: result.error || "ไม่สามารถลบรายการจองได้",
-          variant: "destructive",
-        })
-      }
+      toast({
+        title: "ลบการจองสำเร็จ!",
+        description: "รายการจองถูกลบเรียบร้อยแล้ว",
+      })
+      
+      await fetchBookings()
     } catch (error) {
-      console.error("Delete error:", error)
+      const message = error instanceof Error ? error.message : "ไม่สามารถลบรายการจองได้"
       toast({
         title: "ลบการจองไม่สำเร็จ",
-        description: "เกิดข้อผิดพลาดในการเชื่อมต่อ. กรุณาลองอีกครั้ง.",
+        description: message,
         variant: "destructive",
       })
     } finally {
       setDeletingId(null)
     }
-  }
+  }, [toast, fetchBookings])
 
-  // Manual cleanup
-  const handleCleanup = async () => {
-    try {
-      const response = await fetch("/api/cleanup", { method: "POST" })
-      if (response.ok) {
-        const result = await response.json()
-        toast({
-          title: "Cleanup Complete",
-          description: result.message,
-        })
-        await fetchBookings() // Refresh the list
-      }
-    } catch (error) {
-      toast({
-        title: "Cleanup Failed",
-        description: "Failed to remove expired bookings",
-        variant: "destructive",
-      })
-    }
-  }
-
-  // Initial load and periodic refresh
-  useEffect(() => {
-    initializeSession()
-    fetchBookings()
-
-    // Set up periodic refresh every 30 seconds
-    const interval = setInterval(fetchBookings, 30000)
-
-    return () => clearInterval(interval)
+  // Form handlers
+  const updateFormData = useCallback((updates: Partial<FormData>) => {
+    setFormData(prev => ({ ...prev, ...updates }))
   }, [])
 
-  // Update form data when date changes
-  useEffect(() => {
-    if (date) {
-      setFormData({ ...formData, date: format(date, "yyyy-MM-dd") })
-    }
-  }, [date])
-
-  // Validate Thai phone number
-  const validateThaiPhone = (phone: string): boolean => {
-    // Remove all spaces, dashes, and parentheses
-    const cleanPhone = phone.replace(/[\s\-\(\)]/g, '')
-
-    // Thai phone number patterns:
-    // Mobile: 08X-XXX-XXXX or 06X-XXX-XXXX or 09X-XXX-XXXX
-    // With country code: +66 8X-XXX-XXXX or 66 8X-XXX-XXXX
-    // Landline: 0X-XXX-XXXX (where X is 2-7 for area codes)
-
-    const patterns = [
-      /^0[689]\d{8}$/, // Mobile numbers: 08X, 06X, 09X followed by 8 digits
-      /^0[2-7]\d{7,8}$/, // Landline numbers: area codes 02-07 followed by 7-8 digits
-      /^\+66[689]\d{8}$/, // International mobile: +66 8X, +66 6X, +66 9X
-      /^\+660[2-7]\d{7,8}$/, // International landline: +66 0X
-      /^66[689]\d{8}$/, // International mobile without +: 66 8X, 66 6X, 66 9X
-      /^660[2-7]\d{7,8}$/ // International landline without +: 66 0X
-    ]
-
-    return patterns.some(pattern => pattern.test(cleanPhone))
-  }
-
-  // Validate form
-  const validateForm = () => {
+  const validateForm = useCallback((): boolean => {
     const { bookerName, machine, startTime, endTime, phone } = formData
-    const date = new Date().toISOString().split("T")[0]
+    const currentDate = new Date().toISOString().split("T")[0]
 
-    if (!bookerName || !machine || !date || !startTime || !endTime || !phone) {
+    if (!bookerName || !machine || !currentDate || !startTime || !endTime || !phone) {
       toast({
         title: "จองไม่สำเร็จ",
         description: "กรุณากรอกข้อมูลให้ครบถ้วน",
@@ -217,7 +241,6 @@ export default function BookingSystem() {
       return false
     }
 
-    // Validate Thai phone number
     if (!validateThaiPhone(phone)) {
       toast({
         title: "จองไม่สำเร็จ",
@@ -236,7 +259,7 @@ export default function BookingSystem() {
       return false
     }
 
-    const bookingDateTime = new Date(`${date}T${startTime}`)
+    const bookingDateTime = new Date(`${currentDate}T${startTime}`)
     const now = new Date()
     if (bookingDateTime <= now) {
       toast({
@@ -248,10 +271,9 @@ export default function BookingSystem() {
     }
 
     return true
-  }
+  }, [formData, toast])
 
-  // Submit booking
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!validateForm()) return
@@ -268,123 +290,57 @@ export default function BookingSystem() {
         endTime: formData.endTime,
       }
 
-      console.log("Submitting booking:", submissionData)
-
-      const response = await fetch("/api/bookings", {
+      await apiCall("/api/bookings", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(submissionData),
       })
 
-      const result = await response.json()
-      console.log("Response:", result)
-
-      if (response.ok) {
-        toast({
-          title: "จองสำเร็จ",
-          description: "สร้างรายการจองสำเร็จ!",
-        })
-        setFormData({
-          bookerName: "",
-          machine: "",
-          date: "",
-          startTime: "",
-          endTime: "",
-          phone: "",
-        })
-        await fetchBookings()
-      } else {
-        toast({
-          title: "จองไม่สำเร็จ",
-          description: result.error || "ไม่สามารถสร้างรายการจองได้",
-          variant: "destructive",
-        })
-      }
+      toast({
+        title: "จองสำเร็จ",
+        description: "สร้างรายการจองสำเร็จ!",
+      })
+      
+      setFormData(INITIAL_FORM_DATA)
+      await fetchBookings()
     } catch (error) {
-      console.error("Submit error:", error)
+      const message = error instanceof Error ? error.message : "เกิดข้อผิดพลาดในการเชื่อมต่อ. กรุณาลองอีกครั้ง."
       toast({
         title: "จองไม่สำเร็จ",
-        description: "เกิดข้อผิดพลาดในการเชื่อมต่อ. กรุณาลองอีกครั้ง.",
+        description: message,
         variant: "destructive",
       })
     } finally {
       setIsSubmitting(false)
     }
-  }
+  }, [formData, validateForm, toast, fetchBookings])
 
-  // Format time for display
-  const formatTimeSlot = (startTime: string, endTime: string) => {
-    const formatTime = (time: string) => {
-      const [hours, minutes] = time.split(":")
-      const hour = Number.parseInt(hours)
-      const ampm = hour >= 12 ? "PM" : "AM"
-      const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour
-      return `${displayHour}:${minutes} ${ampm}`
-    }
-    return `${formatTime(startTime)} - ${formatTime(endTime)}`
-  }
-
-  // Format date for display
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString("en-US", {
-      weekday: "short",
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    })
-  }
-
-  // Get user's bookings
-  const myBookings = bookings.filter((booking) => booking.isOwner)
-
-  // Group bookings by machine
-  const groupedBookings = {
-    "เครื่องซักผ้าในหอ (ใหญ่)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (ใหญ่)"),
-    "เครื่องซักผ้าในหอ (เล็ก)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (เล็ก)"),
-    "เครื่องซักผ้านอกหอ": bookings.filter(b => b.machine === "เครื่องซักผ้านอกหอ")
-  }
-
-  const machineOptions = [
-    {
-      id: "big-indoor",
-      name: "เครื่องซักผ้าในหอ (ใหญ่)",
-      description: "",
-      icon: <WashingMachineIcon className="h-24 w-24" />
-    },
-    {
-      id: "small-indoor",
-      name: "เครื่องซักผ้าในหอ (เล็ก)",
-      description: "",
-      icon: <WashingMachineIcon className="h-20 w-20" />
-    },
-    {
-      id: "outdoor",
-      name: "เครื่องซักผ้านอกหอ",
-      description: "",
-      icon: <WashingMachineIcon className="h-28 w-28" />
-    }
-  ]
-
-  const handleMachineSelect = (machineId: string) => {
-    const machine = machineOptions.find(m => m.id === machineId)
+  const handleMachineSelect = useCallback((machineId: string) => {
+    const machine = MACHINE_OPTIONS.find(m => m.id === machineId)
     if (machine) {
-      setFormData({ ...formData, machine: machine.name })
+      updateFormData({ machine: machine.name })
       setShowMachineModal(false)
     }
-  }
+  }, [updateFormData])
+
+  // Effects
+  useEffect(() => {
+    initializeSession()
+    fetchBookings()
+
+    const interval = setInterval(fetchBookings, REFRESH_INTERVAL)
+    return () => clearInterval(interval)
+  }, [initializeSession, fetchBookings])
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gray-50 p-2 sm:p-4">
+      <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6">
+        {/* Header */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-2">
-            <h1 className="text-3xl font-bold text-gray-900">ระบบจองเครื่องซักผ้า</h1>
-            <Database className="h-6 w-6 text-blue-500" />
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">ระบบจองเครื่องซักผ้า</h1>
+            <Database className="h-5 w-5 sm:h-6 sm:w-6 text-blue-500" />
           </div>
-          <div className="flex items-center justify-center gap-4 text-sm">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-xs sm:text-sm">
             {sessionId && (
               <span className="text-green-600 flex items-center gap-1">
                 <Shield className="h-3 w-3" />
@@ -401,103 +357,102 @@ export default function BookingSystem() {
             </span>
           </div>
           {error && (
-            <div className="flex items-center justify-center gap-2 text-red-600 bg-red-50 p-2 rounded">
+            <div className="flex items-center justify-center gap-2 text-red-600 bg-red-50 p-2 rounded mx-2">
               <AlertCircle className="h-4 w-4" />
-              <span className="text-sm">{error}</span>
+              <span className="text-xs sm:text-sm">{error}</span>
             </div>
           )}
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* Booking Form */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
+            <CardHeader className="p-4 sm:p-6">
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Calendar className="h-4 w-4 sm:h-5 sm:w-5" />
                 จองคิวเครื่องซักผ้า
               </CardTitle>
-              <CardDescription>กรอกแบบฟอร์มด้านล่างเพื่อจองเครื่องซักผ้า</CardDescription>
+              <CardDescription className="text-sm">กรอกแบบฟอร์มด้านล่างเพื่อจองเครื่องซักผ้า</CardDescription>
             </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
+            <CardContent className="p-4 sm:p-6 pt-0">
+              <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="bookerName" className="flex items-center gap-2">
-                    <User className="h-4 w-4" />
+                  <Label htmlFor="bookerName" className="flex items-center gap-2 text-sm">
+                    <User className="h-3 w-3 sm:h-4 sm:w-4" />
                     ชื่อผู้จอง
                   </Label>
                   <Input
                     id="bookerName"
                     value={formData.bookerName}
-                    onChange={(e) => setFormData({ ...formData, bookerName: e.target.value })}
+                    onChange={(e) => updateFormData({ bookerName: e.target.value })}
                     placeholder="ใส่ชื่อของคุณ"
                     required
+                    className="h-10 sm:h-11"
                   />
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="phone" className="flex items-center gap-2">
-                    <PhoneCall className="h-4 w-4" />
+                  <Label htmlFor="phone" className="flex items-center gap-2 text-sm">
+                    <PhoneCall className="h-3 w-3 sm:h-4 sm:w-4" />
                     เบอร์โทรศัพท์
                   </Label>
                   <Input
                     id="phone"
                     type="tel"
                     value={formData.phone}
-                    onChange={(e) => {
-                      setFormData({ ...formData, phone: e.target.value })
-                    }}
-                    placeholder="เช่น 081-234-5678 หรือ 0812345678"
+                    onChange={(e) => updateFormData({ phone: e.target.value })}
+                    placeholder="เช่น 081-234-5678"
                     required
-                    className={`${formData.phone && !validateThaiPhone(formData.phone)
+                    className={`h-10 sm:h-11 ${
+                      formData.phone && !validateThaiPhone(formData.phone)
                         ? "border-red-500 focus:border-red-500"
                         : ""
-                      }`}
+                    }`}
                   />
                   {formData.phone && !validateThaiPhone(formData.phone) && (
-                    <p className="text-sm text-red-600 flex items-center gap-1">
+                    <p className="text-xs text-red-600 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" />
                       กรุณาใส่เบอร์โทรศัพท์ที่ถูกต้อง
                     </p>
                   )}
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="machine" className="flex items-center gap-2">
-                    <Settings className="h-4 w-4" />
+                  <Label htmlFor="machine" className="flex items-center gap-2 text-sm">
+                    <Settings className="h-3 w-3 sm:h-4 sm:w-4" />
                     เครื่องซักผ้า
                   </Label>
                   <Dialog open={showMachineModal} onOpenChange={setShowMachineModal}>
                     <DialogTrigger asChild>
                       <Button
                         variant="outline"
-                        className="w-full justify-start text-left font-normal"
+                        className="w-full justify-start text-left font-normal h-10 sm:h-11 text-sm"
                         type="button"
                       >
-                        <WashingMachineIcon className="h-4 w-4 mr-2" />
-                        {formData.machine || "เลือกเครื่องซักผ้า"}
+                        <WashingMachineIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
+                        <span className="truncate">{formData.machine || "เลือกเครื่องซักผ้า"}</span>
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="sm:max-w-md">
+                    <DialogContent className="sm:max-w-md mx-4 rounded-lg">
                       <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                          <WashingMachineIcon className="h-5 w-5" />
+                        <DialogTitle className="flex items-center gap-2 text-lg">
+                          <WashingMachineIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                           เลือกเครื่องซักผ้า
                         </DialogTitle>
-                        <DialogDescription>
+                        <DialogDescription className="text-sm">
                           เลือกเครื่องซักผ้าที่คุณต้องการจอง
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="grid gap-3 py-4">
-                        {machineOptions.map((machine) => (
+                      <div className="grid gap-2 py-4">
+                        {MACHINE_OPTIONS.map((machine) => (
                           <Button
                             key={machine.id}
                             variant="outline"
-                            className="h-16 p-4 text-left justify-start hover:bg-blue-50"
+                            className="h-12 sm:h-16 p-3 sm:p-4 text-left justify-start hover:bg-blue-50 text-sm"
                             onClick={() => handleMachineSelect(machine.id)}
                           >
-                            <div className="flex flex-col items-center justify-center gap-2 w-full">
-                              <div className="font-medium text-center">{machine.name}</div>
-                              {machine.description && (
-                                <div className="text-gray-500 text-center">{machine.description}</div>
-                              )}
+                            <div className="flex flex-col items-center justify-center gap-1 w-full">
+                              <div className="font-medium text-center text-xs sm:text-sm">{machine.name}</div>
                             </div>
                           </Button>
                         ))}
@@ -508,14 +463,15 @@ export default function BookingSystem() {
 
                 <div className="flex items-center gap-2 my-2">
                   <div className="flex-1 h-px bg-gray-200" />
-                  <span className="text-xs text-gray-500">จองได้ไม่เกิน 1 ชั่วโมง</span>
+                  <span className="text-xs text-gray-500 px-2">จองได้ไม่เกิน 1 ชั่วโมง</span>
                   <div className="flex-1 h-px bg-gray-200" />
                 </div>
-                <div className="flex gap-4">
-                  <div className="flex-1 space-y-2">
-                    <Label htmlFor="startTime" className="flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
-                      เวลาเริ่มจอง
+
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="startTime" className="flex items-center gap-2 text-sm">
+                      <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+                      เวลาเริ่ม
                     </Label>
                     <Input
                       id="startTime"
@@ -524,13 +480,14 @@ export default function BookingSystem() {
                       step="60"
                       min="00:00"
                       max="23:59"
-                      onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                      onChange={(e) => updateFormData({ startTime: e.target.value })}
                       required
+                      className="h-10 sm:h-11"
                     />
                   </div>
-                  <div className="flex-1 space-y-2">
-                    <Label htmlFor="endTime" className="flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
+                  <div className="space-y-2">
+                    <Label htmlFor="endTime" className="flex items-center gap-2 text-sm">
+                      <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
                       เวลาสิ้นสุด
                     </Label>
                     <Input
@@ -540,13 +497,18 @@ export default function BookingSystem() {
                       step="60"
                       min="00:00"
                       max="23:59"
-                      onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                      onChange={(e) => updateFormData({ endTime: e.target.value })}
                       required
+                      className="h-10 sm:h-11"
                     />
                   </div>
                 </div>
 
-                <Button type="submit" className="w-full" disabled={isSubmitting}>
+                <Button 
+                  type="submit" 
+                  className="w-full h-11 sm:h-12 text-sm sm:text-base" 
+                  disabled={isSubmitting || !isFormValid}
+                >
                   {isSubmitting ? "กำลังจอง..." : "เริ่มจองคิว"}
                 </Button>
               </form>
@@ -555,65 +517,70 @@ export default function BookingSystem() {
 
           {/* Current Bookings */}
           <Card>
-            <CardHeader>
+            <CardHeader className="p-4 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>คิวตอนนี้</CardTitle>
-                  <CardDescription>
+                  <CardTitle className="text-lg sm:text-xl">คิวตอนนี้</CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
                     รายการคิว ({bookings.length} ทั้งหมด, {myBookings.length} ของคุณ)
                   </CardDescription>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={fetchBookings} disabled={isLoading}>
-                    <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-                  </Button>
-                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={fetchBookings} 
+                  disabled={isLoading} 
+                  className="h-8 w-8 p-0"
+                >
+                  <RefreshCw className={`h-3 w-3 sm:h-4 sm:w-4 ${isLoading ? "animate-spin" : ""}`} />
+                </Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 md:grid-cols-3">
+            <CardContent className="p-4 sm:p-6 pt-0">
+              <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
                 {Object.entries(groupedBookings).map(([machineName, machineBookings]) => (
-                  <div key={machineName} className="space-y-3">
-                    <div className="flex gap-2 p-2 bg-gray-100 rounded-lg h-20">
-                      <WashingMachineIcon className="h-5 w-5 text-blue-600" />
-                      <div>
-                        <h3 className="font-medium text-sm">{machineName}</h3>
+                  <div key={machineName} className="space-y-2 sm:space-y-3">
+                    <div className="flex gap-2 p-2 sm:p-3 bg-gray-100 rounded-lg">
+                      <WashingMachineIcon className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600 flex-shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-medium text-xs sm:text-sm truncate">{machineName}</h3>
                         <p className="text-xs text-gray-500">{machineBookings.length} คิว</p>
                       </div>
                     </div>
-                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                    <div className="space-y-2 max-h-60 sm:max-h-80 overflow-y-auto">
                       {machineBookings.length === 0 ? (
-                        <div className="text-center py-4 text-gray-400">
-                          <Waves className="h-8 w-8 mx-auto mb-1 opacity-50" />
+                        <div className="text-center py-3 sm:py-4 text-gray-400">
+                          <Waves className="h-6 w-6 sm:h-8 sm:w-8 mx-auto mb-1 opacity-50" />
                           <p className="text-xs">ว่าง</p>
                         </div>
                       ) : (
                         machineBookings.map((booking) => (
                           <div
                             key={booking.id}
-                            className={`p-2 border rounded-lg shadow-sm hover:shadow-md transition-shadow text-sm ${booking.isOwner ? "bg-blue-50 border-blue-200" : "bg-white"
-                              }`}
+                            className={`p-2 sm:p-3 border rounded-lg shadow-sm hover:shadow-md transition-shadow text-xs sm:text-sm ${
+                              booking.isOwner ? "bg-blue-50 border-blue-200" : "bg-white"
+                            }`}
                           >
-                            <div className="flex justify-between items-start">
-                              <div className="space-y-1 flex-1">
-                                <div className="font-medium text-gray-900 flex items-center gap-1 text-sm">
-                                  {booking.booker_name}
-                                  {booking.isOwner && <Shield className="h-3 w-3 text-blue-500" />}
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="space-y-1 flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 flex items-center gap-1">
+                                  <span className="truncate">{booking.booker_name}</span>
+                                  {booking.isOwner && <Shield className="h-3 w-3 text-blue-500 flex-shrink-0" />}
                                 </div>
                                 <div className="text-xs text-gray-500 flex items-center gap-1">
-                                  <PhoneCall className="h-3 w-3" />
-                                  {booking.phone}
+                                  <PhoneCall className="h-3 w-3 flex-shrink-0" />
+                                  <span className="truncate">{booking.phone}</span>
                                 </div>
                                 <div className="text-xs font-medium text-blue-600 flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {formatTimeSlot(booking.start_time, booking.end_time)}
+                                  <Clock className="h-3 w-3 flex-shrink-0" />
+                                  <span className="truncate">{formatTimeSlot(booking.start_time, booking.end_time)}</span>
                                 </div>
                               </div>
                               {booking.isOwner && (
                                 <Button
                                   variant="destructive"
                                   size="sm"
-                                  className="h-6 w-6 p-0"
+                                  className="h-6 w-6 p-0 flex-shrink-0"
                                   onClick={() => deleteBooking(booking.id)}
                                   disabled={deletingId === booking.id}
                                 >
@@ -639,23 +606,25 @@ export default function BookingSystem() {
         {/* My Bookings Section */}
         {myBookings.length > 0 && (
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-blue-500" />
+            <CardHeader className="p-4 sm:p-6">
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Shield className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" />
                 คิวของฉัน
               </CardTitle>
-              <CardDescription>รายการจองของคุณ ({myBookings.length} ทั้งหมด)</CardDescription>
+              <CardDescription className="text-xs sm:text-sm">
+                รายการจองของคุณ ({myBookings.length} ทั้งหมด)
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <CardContent className="p-4 sm:p-6 pt-0">
+              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                 {myBookings.map((booking) => (
-                  <div key={booking.id} className="p-3 border rounded-lg bg-blue-50 border-blue-200">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="space-y-1">
-                        <div className="font-medium text-gray-900">{booking.booker_name}</div>
-                        <div className="text-sm text-gray-600">{booking.machine}</div>
-                        <div className="text-sm text-gray-500">{formatDate(booking.date)}</div>
-                        <div className="text-sm text-blue-600">
+                  <div key={booking.id} className="p-3 sm:p-4 border rounded-lg bg-blue-50 border-blue-200">
+                    <div className="flex justify-between items-start gap-2 mb-2">
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="font-medium text-gray-900 text-sm truncate">{booking.booker_name}</div>
+                        <div className="text-xs sm:text-sm text-gray-600 truncate">{booking.machine}</div>
+                        <div className="text-xs text-gray-500">{formatDate(booking.date)}</div>
+                        <div className="text-xs sm:text-sm text-blue-600">
                           {formatTimeSlot(booking.start_time, booking.end_time)}
                         </div>
                       </div>
@@ -664,6 +633,7 @@ export default function BookingSystem() {
                         size="sm"
                         onClick={() => deleteBooking(booking.id)}
                         disabled={deletingId === booking.id}
+                        className="h-8 w-8 p-0 flex-shrink-0"
                       >
                         {deletingId === booking.id ? (
                           <RefreshCw className="h-3 w-3 animate-spin" />
