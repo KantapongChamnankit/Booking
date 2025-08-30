@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -102,6 +103,16 @@ export default function AdminPage() {
 
   useEffect(() => {
     fetchBookings()
+    // Subscribe to real-time changes
+    const subscription = supabase
+      .channel('bookings-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        fetchBookings()
+      })
+      .subscribe()
+    return () => {
+      supabase.removeChannel(subscription)
+    }
   }, [])
 
   const formatTimeSlot = (startTime: string, endTime: string) => {
@@ -129,13 +140,16 @@ export default function AdminPage() {
     const bookingStartDateTime = new Date(`${booking.date}T${booking.start_time}`)
     const bookingEndDateTime = new Date(`${booking.date}T${booking.end_time}`)
     const now = new Date()
-
-    if (now < bookingStartDateTime) {
-      return { status: "upcoming", color: "bg-blue-100 text-blue-800" }
+    // Expired if end time + 1 hour < now
+    const expired = now.getTime() > bookingEndDateTime.getTime() + 60 * 60 * 1000
+    if (expired) {
+      return { status: "expired", color: "bg-gray-100 text-gray-800", disabled: true }
+    } else if (now < bookingStartDateTime) {
+      return { status: "upcoming", color: "bg-blue-100 text-blue-800", disabled: false }
     } else if (now >= bookingStartDateTime && now <= bookingEndDateTime) {
-      return { status: "active", color: "bg-green-100 text-green-800" }
+      return { status: "active", color: "bg-green-100 text-green-800", disabled: false }
     } else {
-      return { status: "expired", color: "bg-gray-100 text-gray-800" }
+      return { status: "recently expired", color: "bg-yellow-100 text-yellow-800", disabled: false }
     }
   }
 
@@ -179,9 +193,9 @@ export default function AdminPage() {
                 </div>
               ) : (
                 bookings.map((booking) => {
-                  const { status, color } = getBookingStatus(booking)
+                  const { status, color, disabled } = getBookingStatus(booking)
                   return (
-                    <div key={booking.id} className="p-4 border rounded-lg bg-white shadow-sm">
+                    <div key={booking.id} className={`p-4 border rounded-lg bg-white shadow-sm ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
                       <div className="flex justify-between items-start mb-3">
                         <div className="space-y-1">
                           <div className="font-medium text-gray-900 flex items-center gap-2">
@@ -199,7 +213,7 @@ export default function AdminPage() {
                             size="sm"
                             variant="destructive"
                             onClick={() => removeBooking(booking.id)}
-                            disabled={isLoading}
+                            disabled={isLoading || disabled}
                           >
                             <Trash2 className="h-4 w-4 mr-1" />
                             Remove

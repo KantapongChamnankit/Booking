@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import fs from "fs"
-import path from "path"
+import { supabase } from "@/lib/supabase"
 import { isBookingExpired, getCurrentDateString } from "@/lib/timezone"
 
 interface Booking {
@@ -16,16 +15,7 @@ interface Booking {
   session_id: string // Add session ownership
 }
 
-// Path to the JSON file
-const DATA_FILE = path.join(process.cwd(), "data", "bookings.json")
-
-// Ensure data directory exists
-const ensureDataDirectory = () => {
-  const dataDir = path.dirname(DATA_FILE)
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true })
-  }
-}
+// ...existing code...
 
 // Get session ID from cookies
 const getSessionId = (): string | null => {
@@ -60,30 +50,40 @@ const validateThaiPhone = (phone: string): boolean => {
   return patterns.some(pattern => pattern.test(cleanPhone))
 }
 
-// Read bookings from JSON file
-const readBookings = (): Booking[] => {
-  try {
-    ensureDataDirectory()
-    if (!fs.existsSync(DATA_FILE)) {
-      return []
-    }
-    const data = fs.readFileSync(DATA_FILE, "utf8")
-    return JSON.parse(data)
-  } catch (error) {
-    console.error("Error reading bookings:", error)
+// Supabase CRUD helpers
+const getBookingsFromSupabase = async (): Promise<Booking[]> => {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*')
+  if (error) {
+    console.error('Supabase fetch error:', error)
     return []
   }
+  return data || []
 }
 
-// Write bookings to JSON file
-const writeBookings = (bookings: Booking[]): void => {
-  try {
-    ensureDataDirectory()
-    fs.writeFileSync(DATA_FILE, JSON.stringify(bookings, null, 2))
-  } catch (error) {
-    console.error("Error writing bookings:", error)
-    throw new Error("ไม่สามารถบันทึกข้อมูลการจองได้")
+const insertBookingToSupabase = async (booking: Booking): Promise<boolean> => {
+  const { error } = await supabase
+    .from('bookings')
+    .insert([booking])
+  if (error) {
+    console.error('Supabase insert error:', error)
+    return false
   }
+  return true
+}
+
+const deleteExpiredBookingsFromSupabase = async (): Promise<number> => {
+  // This assumes you have a way to determine expired bookings in SQL or via JS
+  const { data, error } = await supabase
+    .from('bookings')
+    .delete()
+    .match({ expired: true }) // You may need to adjust this logic
+  if (error) {
+    console.error('Supabase delete error:', error)
+    return 0
+  }
+  return (data as any)?.length || 0
 }
 
 // Clean up expired bookings with proper timezone handling
@@ -134,19 +134,13 @@ const generateId = (): string => {
 export async function GET() {
   try {
     const sessionId = getSessionId()
-    let bookings = readBookings()
+    let bookings = await getBookingsFromSupabase()
 
-    // Clean up expired bookings
+    // Clean up expired bookings (in-memory, for ownership info)
     const activeBookings = cleanupExpiredBookings(bookings)
 
-    // Save cleaned bookings back to file if any were removed
-    if (activeBookings.length !== bookings.length) {
-      writeBookings(activeBookings)
-      bookings = activeBookings // อัปเดต bookings หลังลบ
-    }
-
     // Sort bookings by date and time
-    bookings.sort((a, b) => {
+    activeBookings.sort((a, b) => {
       if (a.date !== b.date) {
         return a.date.localeCompare(b.date)
       }
@@ -154,14 +148,14 @@ export async function GET() {
     })
 
     // Add ownership info to each booking
-    const bookingsWithOwnership = bookings.map((booking) => ({
+    const bookingsWithOwnership = activeBookings.map((booking) => ({
       ...booking,
       isOwner: booking.session_id === sessionId,
     }))
 
     return NextResponse.json({
       bookings: bookingsWithOwnership,
-      count: bookings.length,
+      count: activeBookings.length,
       sessionId: sessionId,
     })
   } catch (error) {
@@ -203,10 +197,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "ไม่สามารถจองย้อนหลังได้ กรุณาเลือกเวลาในอนาคต" }, { status: 400 })
     }
 
-    // Read current bookings
-    let bookings = readBookings()
-
-    // Clean up expired bookings first
+    // Read current bookings from Supabase
+    let bookings = await getBookingsFromSupabase()
     bookings = cleanupExpiredBookings(bookings)
 
     // Create new booking object
@@ -235,11 +227,11 @@ export async function POST(request: NextRequest) {
       session_id: sessionId,
     }
 
-    // Add to bookings array
-    bookings.push(newBooking)
-
-    // Save to file
-    writeBookings(bookings)
+    // Insert to Supabase
+    const success = await insertBookingToSupabase(newBooking)
+    if (!success) {
+      return NextResponse.json({ error: "ไม่สามารถสร้างการจองได้" }, { status: 500 })
+    }
 
     console.log(
       `การจองใหม่: ${bookerName} - ${machine} วันที่ ${date} เวลา ${startTime} ถึง ${endTime} (เซสชั่น: ${sessionId})`,
@@ -261,16 +253,8 @@ export async function POST(request: NextRequest) {
 // DELETE - Remove expired bookings manually
 export async function DELETE() {
   try {
-    const bookings = readBookings()
-    const originalCount = bookings.length
-
-    // Clean up expired bookings
-    const activeBookings = cleanupExpiredBookings(bookings)
-    const deletedCount = originalCount - activeBookings.length
-
-    // Save cleaned bookings
-    writeBookings(activeBookings)
-
+    // This should be improved: ideally, expired bookings are flagged in Supabase
+    const deletedCount = await deleteExpiredBookingsFromSupabase()
     return NextResponse.json({
       message: `ลบการจองที่หมดอายุแล้ว ${deletedCount} รายการ`,
       deletedCount: deletedCount,

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
-import fs from "fs"
-import path from "path"
+import { supabase } from "@/lib/supabase"
 import { isBookingExpired, logTimezoneDebug, getCurrentThailandDate } from "@/lib/timezone"
 
 interface Booking {
@@ -13,68 +12,44 @@ interface Booking {
   created_at: string
 }
 
-const DATA_FILE = path.join(process.cwd(), "data", "bookings.json")
+// ...existing code...
 
-const readBookings = (): Booking[] => {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      return []
-    }
-    const data = fs.readFileSync(DATA_FILE, "utf8")
-    return JSON.parse(data)
-  } catch (error) {
-    console.error("Error reading bookings:", error)
-    return []
-  }
-}
-
-const writeBookings = (bookings: Booking[]): void => {
-  try {
-    const dataDir = path.dirname(DATA_FILE)
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true })
-    }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(bookings, null, 2))
-  } catch (error) {
-    console.error("Error writing bookings:", error)
-    throw new Error("Failed to save bookings")
-  }
-}
-
-const performCleanup = () => {
-  const bookings = readBookings()
-  const originalCount = bookings.length
-
+const performCleanup = async () => {
   // Log timezone debug information
   logTimezoneDebug("Cleanup")
-  
-  // Get current Thailand time for comparison
   const currentThailandTime = getCurrentThailandDate()
   console.log(`Current Thailand time for cleanup: ${currentThailandTime.toISOString()}`)
 
-  const activeBookings = bookings.filter((booking) => {
+  // Fetch all bookings from Supabase
+  const { data: bookings, error } = await supabase
+    .from('bookings')
+    .select('*')
+  if (error) {
+    throw new Error('Supabase fetch error: ' + error.message)
+  }
+  const originalCount = bookings.length
+
+  // Find expired bookings
+  const expiredBookings = bookings.filter((booking) => {
     try {
-      const expired = isBookingExpired(booking.date, booking.end_time)
-      
-      if (expired) {
-        console.log(`🗑️  Removing expired booking: ${booking.booker_name} - ${booking.date} ${booking.end_time} (Machine: ${booking.machine})`)
-      } else {
-        console.log(`✅ Keeping active booking: ${booking.booker_name} - ${booking.date} ${booking.end_time}`)
-      }
-      
-      return !expired
+      return isBookingExpired(booking.date, booking.end_time)
     } catch (error) {
-      console.error("Error processing booking:", booking, error)
-      // Keep booking if there's an error parsing dates to be safe
-      return true
+      return false
     }
   })
+  const expiredIds = expiredBookings.map(b => b.id)
 
-  const deletedCount = originalCount - activeBookings.length
-
-  // Save cleaned bookings only if there were changes
-  if (deletedCount > 0) {
-    writeBookings(activeBookings)
+  // Delete expired bookings from Supabase
+  let deletedCount = 0
+  if (expiredIds.length > 0) {
+    const { error: deleteError } = await supabase
+      .from('bookings')
+      .delete()
+      .in('id', expiredIds)
+    if (deleteError) {
+      throw new Error('Supabase delete error: ' + deleteError.message)
+    }
+    deletedCount = expiredIds.length
     console.log(`✨ Cleanup completed: removed ${deletedCount} expired bookings`)
   } else {
     console.log("✨ No expired bookings found during cleanup")
@@ -85,7 +60,7 @@ const performCleanup = () => {
     message: `Removed ${deletedCount} expired booking(s)`,
     deletedCount: deletedCount,
     originalCount: originalCount,
-    activeCount: activeBookings.length,
+    activeCount: originalCount - deletedCount,
     serverTime: new Date().toISOString(),
     thailandTime: currentThailandTime.toISOString(),
     timezone: 'Asia/Bangkok (UTC+7)',
@@ -96,7 +71,7 @@ const performCleanup = () => {
 export async function GET() {
   try {
     console.log("🔄 Starting automatic cleanup...")
-    const result = performCleanup()
+    const result = await performCleanup()
     console.log("✅ Automatic cleanup completed successfully")
     return NextResponse.json(result)
   } catch (error) {
@@ -113,7 +88,7 @@ export async function GET() {
 export async function POST() {
   try {
     console.log("🔄 Starting manual cleanup...")
-    const result = performCleanup()
+    const result = await performCleanup()
     console.log("✅ Manual cleanup completed successfully")
     return NextResponse.json(result)
   } catch (error) {
