@@ -19,6 +19,12 @@ const performCleanup = async () => {
   logTimezoneDebug("Cleanup")
   const currentThailandTime = getCurrentThailandDate()
   console.log(`Current Thailand time for cleanup: ${currentThailandTime.toISOString()}`)
+  console.log(`Current Thailand time (human): ${currentThailandTime.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}`)
+  
+  // Debug: show actual UTC time too
+  const utcNow = new Date()
+  console.log(`Current UTC time: ${utcNow.toISOString()}`)
+  console.log(`Current local time: ${utcNow.toLocaleString()}`)
 
   // Fetch all bookings from Supabase
   const { data: bookings, error } = await supabase
@@ -34,13 +40,47 @@ const performCleanup = async () => {
   const now = currentThailandTime
   bookings.forEach((booking) => {
     try {
-      // คำนวณเวลาสิ้นสุดของ booking
-      const endDateTime = new Date(`${booking.date}T${booking.end_time}`)
-      // ถ้าหมดอายุเกิน 30 นาที (1800000 ms)
-      if (now.getTime() > endDateTime.getTime() + 30 * 60 * 1000) {
+      // คำนวณเวลาสิ้นสุดของ booking - รองรับทั้ง local และ Vercel
+      const bookingDateStr = `${booking.date}T${booking.end_time}:00`
+      console.log(`🔍 Checking booking: ${booking.booker_name} - ${bookingDateStr}`)
+      console.log(`   📝 Created at: ${booking.created_at}`)
+      
+      // สร้าง booking end datetime ในรูปแบบที่ถูกต้องสำหรับ Vercel
+      // ถือว่าข้อมูล date/time เป็น Thailand timezone
+      const [datePart, timePart] = bookingDateStr.split('T')
+      const [year, month, day] = datePart.split('-').map(Number)
+      const [hours, minutes] = timePart.split(':').map(Number)
+      
+      // สร้าง Date object ใน Thailand timezone โดยใช้ offset
+      // Thailand = UTC+7 = 7 * 60 * 60 * 1000 = 25200000 ms
+      const thailandOffset = 7 * 60 * 60 * 1000
+      const bookingEndUTC = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0))
+      const bookingEndThailand = new Date(bookingEndUTC.getTime() - thailandOffset)
+      
+      console.log(`   📅 Booking end (Thailand): ${bookingEndThailand.toISOString()}`)
+      console.log(`   📅 Booking end (display): ${bookingEndThailand.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}`)
+      console.log(`   🕐 Current (Thailand): ${now.toISOString()}`)
+      console.log(`   🕐 Current (display): ${now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}`)
+      
+      // คำนวณความแตกต่างของเวลา (ทั้งคู่เป็น Thailand time แล้ว)
+      const timeDiff = now.getTime() - bookingEndThailand.getTime()
+      const minutesDiff = Math.floor(timeDiff / (1000 * 60))
+      const hoursDiff = Math.floor(minutesDiff / 60)
+      
+      console.log(`   ⏰ Time difference: ${minutesDiff} minutes (${hoursDiff} hours)`)
+      console.log(`   🌍 Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`)
+      
+      // ตรวจสอบว่าหมดอายุเกิน 30 นาที (1800000 ms) หรือไม่
+      if (timeDiff > 30 * 60 * 1000) {
+        console.log(`   ❌ EXPIRED (${minutesDiff} min ago / ${hoursDiff} hours ago) - will delete`)
         expiredIds.push(booking.id)
+      } else if (timeDiff > 0) {
+        console.log(`   ⚠️  Just ended (${minutesDiff} min ago) - not yet expired (need 30+ min)`)
+      } else {
+        console.log(`   ✅ ACTIVE (ends in ${-minutesDiff} min)`)
       }
     } catch (error) {
+      console.error(`❌ Error processing booking ${booking.id}:`, error)
       // skip error
     }
   })
