@@ -7,9 +7,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Progress } from "@/components/ui/progress"
 import { useToast } from "@/hooks/use-toast"
 import { Calendar, Clock, User, Settings, RefreshCw, AlertCircle, Database, Trash2, Shield, PhoneCall, Waves } from "lucide-react"
 import { getCurrentDateString } from "@/lib/timezone"
+import { Badge } from "@/components/ui/badge"
 
 interface Booking {
   id: string
@@ -22,6 +24,14 @@ interface Booking {
   created_at: string
   session_id: string
   isOwner?: boolean
+}
+
+interface BookingWithStatus extends Booking {
+  status: 'upcoming' | 'active' | 'recently-expired'
+  queuePosition?: number
+  minutesExpired?: number
+  minutesRemaining?: number
+  secondsRemaining?: number
 }
 
 interface FormData {
@@ -119,18 +129,19 @@ const apiCall = async (url: string, options?: RequestInit) => {
     },
     ...options,
   })
-  
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Network error" }))
     throw new Error(error.error || `HTTP ${response.status}`)
   }
-  
+
   return response.json()
 }
 
 export default function BookingSystem() {
   // State
   const [bookings, setBookings] = useState<Booking[]>([])
+  const [serverTime, setServerTime] = useState<string | null>(null)
   const [formData, setFormData] = useState<FormData>(INITIAL_FORM_DATA)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -138,20 +149,81 @@ export default function BookingSystem() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showMachineModal, setShowMachineModal] = useState(false)
-  
+
   const { toast } = useToast()
+
+  // Compute booking statuses with server time
+  const bookingsWithStatus = useMemo((): BookingWithStatus[] => {
+    if (!serverTime) return bookings.map(b => ({ ...b, status: 'upcoming' as const }))
+
+    const now = new Date(serverTime)
+
+    return bookings.map((booking) => {
+      const startDateTime = new Date(`${booking.date}T${booking.start_time}`)
+      const endDateTime = new Date(`${booking.date}T${booking.end_time}`)
+
+      if (now.getTime() > endDateTime.getTime()) {
+        // Recently expired (within 30min)
+        const minutesExpired = Math.floor((now.getTime() - endDateTime.getTime()) / (1000 * 60))
+        return {
+          ...booking,
+          status: 'recently-expired',
+          minutesExpired
+        }
+      } else if (now.getTime() >= startDateTime.getTime() && now.getTime() <= endDateTime.getTime()) {
+        // Active now
+        const totalSecondsRemaining = Math.floor((endDateTime.getTime() - now.getTime()) / 1000)
+        const minutesRemaining = Math.floor(totalSecondsRemaining / 60)
+        const secondsRemaining = totalSecondsRemaining % 60
+        return {
+          ...booking,
+          status: 'active',
+          minutesRemaining,
+          secondsRemaining
+        }
+      } else {
+        // Upcoming
+        return {
+          ...booking,
+          status: 'upcoming'
+        }
+      }
+    })
+  }, [bookings, serverTime])
+
+  // Sort bookings: upcoming & active first, then recently expired at bottom
+  const sortedBookings = useMemo(() => {
+    const sorted = [...bookingsWithStatus].sort((a, b) => {
+      // Recently expired go to bottom
+      if (a.status === 'recently-expired' && b.status !== 'recently-expired') return 1
+      if (b.status === 'recently-expired' && a.status !== 'recently-expired') return -1
+
+      // Sort by date and time
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      return a.start_time.localeCompare(b.start_time)
+    })
+
+    // Add queue positions for non-expired bookings
+    let queueCounter = 1
+    return sorted.map((booking) => {
+      if (booking.status !== 'recently-expired') {
+        return { ...booking, queuePosition: queueCounter++ }
+      }
+      return booking
+    })
+  }, [bookingsWithStatus])
 
   // Memoized values
   const myBookings = useMemo(
-    () => bookings.filter((booking) => booking.isOwner),
-    [bookings]
+    () => sortedBookings.filter((booking) => booking.isOwner),
+    [sortedBookings]
   )
 
   const groupedBookings = useMemo(() => ({
-    "เครื่องซักผ้าในหอ (ใหญ่)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (ใหญ่)"),
-    "เครื่องซักผ้าในหอ (เล็ก)": bookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (เล็ก)"),
-    "เครื่องซักผ้านอกหอ": bookings.filter(b => b.machine === "เครื่องซักผ้านอกหอ")
-  }), [bookings])
+    "เครื่องซักผ้าในหอ (ใหญ่)": sortedBookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (ใหญ่)"),
+    "เครื่องซักผ้าในหอ (เล็ก)": sortedBookings.filter(b => b.machine === "เครื่องซักผ้าในหอ (เล็ก)"),
+    "เครื่องซักผ้านอกหอ": sortedBookings.filter(b => b.machine === "เครื่องซักผ้านอกหอ")
+  }), [sortedBookings])
 
   const isFormValid = useMemo(() => {
     const { bookerName, machine, startTime, endTime, phone } = formData
@@ -182,12 +254,13 @@ export default function BookingSystem() {
   const fetchBookings = useCallback(async () => {
     setIsLoading(true)
     setError(null)
-    
+
     try {
       await handleCleanup()
       const data = await apiCall("/api/bookings")
-      
+
       setBookings(data.bookings || [])
+      setServerTime(data.serverTime) // Store server time
       if (data.sessionId) {
         setSessionId(data.sessionId)
       }
@@ -202,7 +275,7 @@ export default function BookingSystem() {
 
   const deleteBooking = useCallback(async (bookingId: string) => {
     setDeletingId(bookingId)
-    
+
     try {
       await apiCall(`/api/bookings/${bookingId}`, {
         method: "DELETE",
@@ -213,7 +286,7 @@ export default function BookingSystem() {
         title: "ลบการจองสำเร็จ!",
         description: "รายการจองถูกลบเรียบร้อยแล้ว",
       })
-      
+
       await fetchBookings()
     } catch (error) {
       const message = error instanceof Error ? error.message : "ไม่สามารถลบรายการจองได้"
@@ -303,7 +376,7 @@ export default function BookingSystem() {
         title: "จองสำเร็จ",
         description: "สร้างรายการจองสำเร็จ!",
       })
-      
+
       setFormData(INITIAL_FORM_DATA)
       await fetchBookings()
     } catch (error) {
@@ -407,11 +480,10 @@ export default function BookingSystem() {
                     onChange={(e) => updateFormData({ phone: e.target.value })}
                     placeholder="เช่น 081-234-5678"
                     required
-                    className={`h-10 sm:h-11 ${
-                      formData.phone && !validateThaiPhone(formData.phone)
-                        ? "border-red-500 focus:border-red-500"
-                        : ""
-                    }`}
+                    className={`h-10 sm:h-11 ${formData.phone && !validateThaiPhone(formData.phone)
+                      ? "border-red-500 focus:border-red-500"
+                      : ""
+                      }`}
                   />
                   {formData.phone && !validateThaiPhone(formData.phone) && (
                     <p className="text-xs text-red-600 flex items-center gap-1">
@@ -437,7 +509,7 @@ export default function BookingSystem() {
                         <span className="truncate">{formData.machine || "เลือกเครื่องซักผ้า"}</span>
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="sm:max-w-md mx-4 rounded-lg">
+                    <DialogContent className="sm:max-w-md max-w-[calc(100vw-2rem)] rounded-lg">
                       <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-lg">
                           <WashingMachineIcon className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -486,7 +558,8 @@ export default function BookingSystem() {
                       max="23:59"
                       onChange={(e) => updateFormData({ startTime: e.target.value })}
                       required
-                      className="h-10 sm:h-11"
+                      className="h-10 sm:h-11 text-sm w-[89vh]"
+                      style={{ fontSize: '16px' }} // Prevent zoom on iOS
                     />
                   </div>
                   <div className="space-y-2">
@@ -503,14 +576,15 @@ export default function BookingSystem() {
                       max="23:59"
                       onChange={(e) => updateFormData({ endTime: e.target.value })}
                       required
-                      className="h-10 sm:h-11"
+                      className="h-10 sm:h-11 text-sm w-[89vh]"
+                      style={{ fontSize: '16px' }} // Prevent zoom on iOS
                     />
                   </div>
                 </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 sm:h-12 text-sm sm:text-base" 
+                <Button
+                  type="submit"
+                  className="w-full h-11 sm:h-12 text-sm sm:text-base"
                   disabled={isSubmitting || !isFormValid}
                 >
                   {isSubmitting ? "กำลังจอง..." : "เริ่มจองคิว"}
@@ -526,14 +600,14 @@ export default function BookingSystem() {
                 <div>
                   <CardTitle className="text-lg sm:text-xl">คิวตอนนี้</CardTitle>
                   <CardDescription className="text-xs sm:text-sm">
-                    รายการคิว ({bookings.length} ทั้งหมด, {myBookings.length} ของคุณ)
+                    คิวตอนนี้ {bookingsWithStatus.filter(b => b.status === "active").length} คิว
                   </CardDescription>
                 </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={fetchBookings} 
-                  disabled={isLoading} 
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchBookings}
+                  disabled={isLoading}
                   className="h-8 w-8 p-0"
                 >
                   <RefreshCw className={`h-3 w-3 sm:h-4 sm:w-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -561,12 +635,41 @@ export default function BookingSystem() {
                         machineBookings.map((booking) => (
                           <div
                             key={booking.id}
-                            className={`p-2 sm:p-3 border rounded-lg shadow-sm hover:shadow-md transition-shadow text-xs sm:text-sm ${
-                              booking.isOwner ? "bg-blue-50 border-blue-200" : "bg-white"
-                            }`}
+                            className={`p-2 sm:p-3 border rounded-lg shadow-sm hover:shadow-md transition-shadow text-xs sm:text-sm ${booking.status === 'recently-expired'
+                              ? "bg-gray-100 border-gray-300 opacity-70"
+                              : booking.isOwner ? "bg-blue-50 border-blue-200" : "bg-white"
+                              }`}
                           >
                             <div className="flex justify-between items-start gap-2">
                               <div className="space-y-1 flex-1 min-w-0">
+                                {/* Queue Position */}
+                                <div className="flex items-center justify-between">
+                                  {booking.queuePosition && (
+                                    // <div className="text-xs font-bold text-green-600 flex items-center gap-1">
+                                    //   คิวที่ {booking.queuePosition}
+                                    // </div>
+                                    <Badge className="bg-blue-100 text-blue-700 border border-blue-200">
+                                      คิวที่ {booking.queuePosition}
+                                    </Badge>
+                                  )}
+                                  {booking.isOwner && booking.status !== 'recently-expired' && (
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="h-6 w-6 p-0 flex-shrink-0"
+                                      onClick={() => deleteBooking(booking.id)}
+                                      disabled={deletingId === booking.id}
+                                    >
+                                      {deletingId === booking.id ? (
+                                        <RefreshCw className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                  )}
+                                </div>
+
+
                                 <div className="font-medium text-gray-900 flex items-center gap-1">
                                   <span className="truncate">{booking.booker_name}</span>
                                   {booking.isOwner && <Shield className="h-3 w-3 text-blue-500 flex-shrink-0" />}
@@ -579,22 +682,41 @@ export default function BookingSystem() {
                                   <Clock className="h-3 w-3 flex-shrink-0" />
                                   <span className="truncate">{formatTimeSlot(booking.start_time, booking.end_time)}</span>
                                 </div>
+
+                                {/* Status-specific content */}
+                                {booking.status === 'active' && booking.minutesRemaining !== undefined && (
+                                  <div className="space-y-1 w-full">
+                                    <div className="relative w-full">
+                                      <Progress
+                                        value={(() => {
+                                          // คำนวณเวลาทั้งหมดของการจอง (ในวินาที)
+                                          const startTime = new Date(`${booking.date}T${booking.start_time}`)
+                                          const endTime = new Date(`${booking.date}T${booking.end_time}`)
+                                          const totalDuration = Math.floor((endTime.getTime() - startTime.getTime()) / 1000)
+                                          
+                                          // เวลาที่เหลือ (ในวินาที)
+                                          const remainingSeconds = (booking.minutesRemaining || 0) * 60 + (booking.secondsRemaining || 0)
+                                          
+                                          // เปอร์เซ็นต์ที่เหลือ
+                                          return Math.max(0, Math.min(100, (remainingSeconds / totalDuration) * 100))
+                                        })()}
+                                        className="h-4 w-full bg-red-100 [&>div]:bg-green-500"
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center w-full">
+                                        <span className="text-[10px] sm:text-xs font-medium text-gray drop-shadow-sm">
+                                          {booking.minutesRemaining} นาที {String(booking.secondsRemaining || 0).padStart(2, '0')} วินาที
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {booking.status === 'recently-expired' && booking.minutesExpired !== undefined && (
+                                  <div className="text-xs text-red-600 font-medium">
+                                    หมดเวลาจองไป {booking.minutesExpired} นาทีแล้ว
+                                  </div>
+                                )}
                               </div>
-                              {booking.isOwner && (
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  className="h-6 w-6 p-0 flex-shrink-0"
-                                  onClick={() => deleteBooking(booking.id)}
-                                  disabled={deletingId === booking.id}
-                                >
-                                  {deletingId === booking.id ? (
-                                    <RefreshCw className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-3 w-3" />
-                                  )}
-                                </Button>
-                              )}
                             </div>
                           </div>
                         ))

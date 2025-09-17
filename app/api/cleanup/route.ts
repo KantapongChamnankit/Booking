@@ -29,17 +29,23 @@ const performCleanup = async () => {
   }
   const originalCount = bookings.length
 
-  // Find expired bookings
-  const expiredBookings = bookings.filter((booking) => {
+  // Find bookings that expired more than 30 minutes ago
+  const expiredIds: string[] = []
+  const now = currentThailandTime
+  bookings.forEach((booking) => {
     try {
-      return isBookingExpired(booking.date, booking.end_time)
+      // คำนวณเวลาสิ้นสุดของ booking
+      const endDateTime = new Date(`${booking.date}T${booking.end_time}`)
+      // ถ้าหมดอายุเกิน 30 นาที (1800000 ms)
+      if (now.getTime() > endDateTime.getTime() + 30 * 60 * 1000) {
+        expiredIds.push(booking.id)
+      }
     } catch (error) {
-      return false
+      // skip error
     }
   })
-  const expiredIds = expiredBookings.map(b => b.id)
 
-  // Delete expired bookings from Supabase
+  // Delete only bookings expired > 30 min
   let deletedCount = 0
   if (expiredIds.length > 0) {
     const { error: deleteError } = await supabase
@@ -50,9 +56,9 @@ const performCleanup = async () => {
       throw new Error('Supabase delete error: ' + deleteError.message)
     }
     deletedCount = expiredIds.length
-    console.log(`✨ Cleanup completed: removed ${deletedCount} expired bookings`)
+    console.log(`✨ Cleanup completed: removed ${deletedCount} expired bookings (>30min)`) 
   } else {
-    console.log("✨ No expired bookings found during cleanup")
+    console.log("✨ No expired bookings found during cleanup (>30min)")
   }
 
   return {

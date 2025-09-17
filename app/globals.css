@@ -92,3 +92,22 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Fix mobile time input overflow */
+@media (max-width: 640px) {
+  input[type="time"] {
+    font-size: 16px !important;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Ensure time picker doesn't overflow */
+  input[type="time"]::-webkit-datetime-edit {
+    padding: 0 4px;
+  }
+  
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    padding: 0;
+    margin: 0 2px 0 0;
+  }
+}
