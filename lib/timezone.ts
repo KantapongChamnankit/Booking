@@ -15,28 +15,27 @@ export const getCurrentThailandTime = (): Date => {
 
 // Get current date in Thailand timezone
 export const getCurrentThailandDate = (): Date => {
+  // Force timezone to Asia/Bangkok for Vercel
+  process.env.TZ = 'Asia/Bangkok'
+  
   // Get current UTC time
   const now = new Date()
   
   // Convert to Thailand time (UTC+7)
-  // Method 1: Use Intl API for more reliable timezone conversion
-  const thailandTimeString = now.toLocaleString("en-CA", { 
+  // Use Intl API for reliable timezone conversion
+  const thailandTimeString = now.toLocaleString("sv-SE", { 
     timeZone: THAILAND_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
-    hour12: false
+    second: '2-digit'
   })
   
   // Parse the formatted string back to a Date object
-  const [datePart, timePart] = thailandTimeString.split(', ')
-  const [year, month, day] = datePart.split('-').map(Number)
-  const [hours, minutes, seconds] = timePart.split(':').map(Number)
-  
-  const thailandDate = new Date(year, month - 1, day, hours, minutes, seconds)
+  // sv-SE format: "YYYY-MM-DD HH:mm:ss"
+  const thailandDate = new Date(thailandTimeString)
   
   return thailandDate
 }

@@ -1,0 +1,12 @@
+{
+  "env": {
+    "TZ": "Asia/Bangkok"
+  },
+  "functions": {
+    "app/api/**/*.ts": {
+      "env": {
+        "TZ": "Asia/Bangkok"
+      }
+    }
+  }
+}
