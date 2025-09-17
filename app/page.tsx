@@ -543,42 +543,42 @@ export default function BookingSystem() {
                   <div className="flex-1 h-px bg-gray-200" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full">
                   <div className="space-y-2">
                     <Label htmlFor="startTime" className="flex items-center gap-2 text-sm">
-                      <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
-                      เวลาเริ่ม
+                    <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+                    เวลาเริ่ม
                     </Label>
                     <Input
-                      id="startTime"
-                      type="time"
-                      value={formData.startTime}
-                      step="60"
-                      min="00:00"
-                      max="23:59"
-                      onChange={(e) => updateFormData({ startTime: e.target.value })}
-                      required
-                      className="h-10 sm:h-11 text-sm w-[89vh]"
-                      style={{ fontSize: '16px' }} // Prevent zoom on iOS
-                    />
+                    id="startTime"
+                    type="time"
+                    value={formData.startTime}
+                    step="60"
+                    min="00:00"
+                    max="23:59"
+                    onChange={(e) => updateFormData({ startTime: e.target.value })}
+                    required
+                    className="h-10 sm:h-11 text-sm"
+                    style={{ fontSize: '16px', width: '85%' }} // Prevent zoom on iOS
+                  />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="endTime" className="flex items-center gap-2 text-sm">
-                      <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
-                      เวลาสิ้นสุด
-                    </Label>
-                    <Input
-                      id="endTime"
-                      type="time"
-                      value={formData.endTime}
-                      step="60"
-                      min="00:00"
-                      max="23:59"
-                      onChange={(e) => updateFormData({ endTime: e.target.value })}
-                      required
-                      className="h-10 sm:h-11 text-sm w-[89vh]"
-                      style={{ fontSize: '16px' }} // Prevent zoom on iOS
-                    />
+                  <Label htmlFor="endTime" className="flex items-center gap-2 text-sm">
+                    <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+                    เวลาสิ้นสุด
+                  </Label>
+                  <Input
+                    id="endTime"
+                    type="time"
+                    value={formData.endTime}
+                    step="60"
+                    min="00:00"
+                    max="23:59"
+                    onChange={(e) => updateFormData({ endTime: e.target.value })}
+                    required
+                    className="h-10 sm:h-11 text-sm"
+                    style={{ fontSize: '16px', width: '85%' }} // Prevent zoom on iOS
+                  />
                   </div>
                 </div>
 
