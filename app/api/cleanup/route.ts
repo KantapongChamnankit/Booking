@@ -40,27 +40,19 @@ const performCleanup = async () => {
   const now = currentThailandTime
   bookings.forEach((booking) => {
     try {
-      // คำนวณเวลาสิ้นสุดของ booking - รองรับทั้ง local และ Vercel
+      // คำนวณเวลาสิ้นสุดของ booking - simplified approach
       const bookingDateStr = `${booking.date}T${booking.end_time}:00`
       console.log(`🔍 Checking booking: ${booking.booker_name} - ${bookingDateStr}`)
       console.log(`   📝 Created at: ${booking.created_at}`)
       
-      // สร้าง booking end datetime ในรูปแบบที่ถูกต้องสำหรับ Vercel
-      // ถือว่าข้อมูล date/time เป็น Thailand timezone
-      const [datePart, timePart] = bookingDateStr.split('T')
-      const [year, month, day] = datePart.split('-').map(Number)
-      const [hours, minutes] = timePart.split(':').map(Number)
-      
-      // สร้าง Date object ใน Thailand timezone โดยใช้ offset
-      // Thailand = UTC+7 = 7 * 60 * 60 * 1000 = 25200000 ms
-      const thailandOffset = 7 * 60 * 60 * 1000
-      const bookingEndUTC = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0))
-      const bookingEndThailand = new Date(bookingEndUTC.getTime() - thailandOffset)
+      // สร้าง booking end datetime - treat the date/time as Thailand timezone
+      // Simple approach: parse as local time then treat as Thailand time
+      const bookingEndThailand = new Date(bookingDateStr)
       
       console.log(`   📅 Booking end (Thailand): ${bookingEndThailand.toISOString()}`)
-      console.log(`   📅 Booking end (display): ${bookingEndThailand.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}`)
+      console.log(`   📅 Booking end (display): ${bookingEndThailand.toLocaleString('en-US')}`)
       console.log(`   🕐 Current (Thailand): ${now.toISOString()}`)
-      console.log(`   🕐 Current (display): ${now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}`)
+      console.log(`   🕐 Current (display): ${now.toLocaleString('en-US')}`)
       
       // คำนวณความแตกต่างของเวลา (ทั้งคู่เป็น Thailand time แล้ว)
       const timeDiff = now.getTime() - bookingEndThailand.getTime()
