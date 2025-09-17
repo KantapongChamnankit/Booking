@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { supabase } from "@/lib/supabase"
-import { isBookingExpired, getCurrentDateString, getCurrentThailandDate } from "@/lib/timezone"
+import { getCurrentDateString, getCurrentThailandDate } from "@/lib/timezone"
+import { isBookingExpired } from "../cleanup/route"
 
 interface Booking {
   id: string
@@ -134,14 +135,14 @@ const generateId = (): string => {
 export async function GET() {
   try {
     const sessionId = getSessionId()
-    const serverTime = getCurrentThailandDate()
+    const serverTime = new Date();
     let bookings = await getBookingsFromSupabase()
 
     // Filter bookings: keep only those not expired >30min
     const filteredBookings = bookings.filter((booking) => {
       try {
         const endDateTime = new Date(`${booking.date}T${booking.end_time}`)
-        // Keep if end_time + 30min > now
+        // Keep if end_time + 30min < now
         return endDateTime.getTime() + 30 * 60 * 1000 > serverTime.getTime()
       } catch (error) {
         return true // Keep if error parsing

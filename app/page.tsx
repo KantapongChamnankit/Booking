@@ -165,6 +165,7 @@ export default function BookingSystem() {
       if (now.getTime() > endDateTime.getTime()) {
         // Recently expired (within 30min)
         const minutesExpired = Math.floor((now.getTime() - endDateTime.getTime()) / (1000 * 60))
+        console.log(now.getTime(), endDateTime.getTime(), now.getTime() - endDateTime.getTime())
         return {
           ...booking,
           status: 'recently-expired',
