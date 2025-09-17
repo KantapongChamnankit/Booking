@@ -199,16 +199,21 @@ export default function BookingSystem() {
       if (a.status === 'recently-expired' && b.status !== 'recently-expired') return 1
       if (b.status === 'recently-expired' && a.status !== 'recently-expired') return -1
 
-      // Sort by date and time
+      // Sort by machine, then date and time
+      if (a.machine !== b.machine) return a.machine.localeCompare(b.machine)
       if (a.date !== b.date) return a.date.localeCompare(b.date)
       return a.start_time.localeCompare(b.start_time)
     })
 
-    // Add queue positions for non-expired bookings
-    let queueCounter = 1
+    // Add queue positions for non-expired bookings per machine
+    const queueCounters: { [machine: string]: number } = {}
     return sorted.map((booking) => {
       if (booking.status !== 'recently-expired') {
-        return { ...booking, queuePosition: queueCounter++ }
+        if (!queueCounters[booking.machine]) {
+          queueCounters[booking.machine] = 1
+        }
+        const queuePosition = queueCounters[booking.machine]++
+        return { ...booking, queuePosition }
       }
       return booking
     })
