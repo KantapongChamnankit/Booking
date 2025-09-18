@@ -44,7 +44,7 @@ export function isBookingExpired(bookingDate: string, bookingEndTime: string): b
     const serverTime = new Date();
     const endDateTime = new Date(`${bookingDate}T${bookingEndTime}`)
     // Keep if end_time + 30min > now
-    console.log(new Date(endDateTime.getTime() + 30 * 60 * 1000).toISOString(), new Date(serverTime.getTime()).toISOString())
+    console.log(new Date(endDateTime.getTime() + 30 * 60 * 1000).toISOString(), new Date(serverTime.getTime() + (7 * 60 * 60 * 1000)).toISOString())
     return endDateTime.getTime() + 30 * 60 * 1000 < serverTime.getTime()
 }
 
